@@ -121,11 +121,70 @@ jobs:
         id: package
         env:
           # The blueprint charts, named rather than inferred from the archive: inferring would
-          # send a blueprint whose CompositionDefinition went missing to `operators`, which
-          # accepts it. Named, it is checked below and refused before the push.
+          # send a blueprint whose CompositionDefinition went missing to `operators`. Named, the
+          # gate below refuses it before the push. Every other chart is declared `operators`, and
+          # the gate refuses one whose archive says otherwise.
           BLUEPRINT_CHARTS: nutanix-virtualmachine
         run: |
           set -euo pipefail
+          # Refuse here, before GHCR holds the version, every archive the Marketplace index's publisher
+          # would refuse after it (PUBLISHING.md rules 2 and 3): the same checks, on the same archive.
+          # helm package exits 0 whether or not a file made it into the chart, so the archive is what is
+          # checked. Listings are read once and matched with here-strings: `tar | grep -q` under
+          # pipefail fails on SIGPIPE when grep matches early.
+          gate() {
+            local name="$1" tgz="$2" channel="$3" members chart_yaml chart_ver src want kind f
+            local cd_yaml cd_url cd_ver
+            members="$(tar tzf "$tgz")"
+            chart_yaml="$(tar -xzOf "$tgz" "${name}/Chart.yaml")"
+            chart_ver="$(yq -r '.version' <<< "$chart_yaml")"
+            src="https://github.com/${GITHUB_REPOSITORY}"
+            if ! yq -e ".sources // [] | .[] | select(. == \"${src}\")" <<< "$chart_yaml" >/dev/null 2>&1; then
+              echo "::error::${name}: Chart.yaml sources: must list ${src}, the repository that builds it"
+              return 1
+            fi
+            if [ "$channel" != operators ]; then
+              for f in values.schema.json compositiondefinition.yaml; do
+                if ! grep -qxF "${name}/${f}" <<< "$members"; then
+                  echo "::error::$(basename "$tgz") lacks ${name}/${f}"
+                  return 1
+                fi
+              done
+            fi
+            want=operators
+            if grep -qxF "${name}/values.schema.json" <<< "$members" \
+               && grep -qxF "${name}/compositiondefinition.yaml" <<< "$members"; then
+              kind="$(yq -r '.annotations."krateo.io/kind" // ""' <<< "$chart_yaml")"
+              if [ "$kind" = page-set ]; then want=pages; else want=blueprints; fi
+            fi
+            if [ "$want" != "$channel" ]; then
+              echo "::error::${name}: its archive belongs in ${want}, not ${channel} (PUBLISHING.md rule 2)"
+              return 1
+            fi
+            if [ "$channel" = operators ]; then
+              return 0
+            fi
+            cd_yaml="$(tar -xzOf "$tgz" "${name}/compositiondefinition.yaml")"
+            cd_url="$(yq -r 'select(.kind == "CompositionDefinition") | .spec.chart.url' <<< "$cd_yaml")"
+            cd_ver="$(yq -r 'select(.kind == "CompositionDefinition") | .spec.chart.version' <<< "$cd_yaml")"
+            if [ "$cd_url" != "oci://ghcr.io/krateo-blueprints/charts/${name}" ]; then
+              echo "::error::${name}: its CompositionDefinition installs '${cd_url}', not oci://ghcr.io/krateo-blueprints/charts/${name}"
+              return 1
+            fi
+            if [ "$cd_ver" != "$chart_ver" ]; then
+              echo "::error::${name} ${chart_ver}: its CompositionDefinition installs version '${cd_ver}' (PUBLISHING.md rule 4)"
+              return 1
+            fi
+            case "$(yq -r '.icon // ""' <<< "$chart_yaml")" in
+              https://*) : ;;
+              *) echo "::error::${name}: Chart.yaml icon must be an absolute https URL"; return 1 ;;
+            esac
+            if [ "$(yq -r '(.keywords // []) | length' <<< "$chart_yaml")" -eq 0 ]; then
+              echo "::error::${name}: Chart.yaml needs keywords, the Marketplace's tags"
+              return 1
+            fi
+          }
+
           mkdir -p charts-dist-blueprints charts-dist-operators
           while read -r dir; do
             [ -z "$dir" ] && continue
@@ -157,48 +216,17 @@ jobs:
               *" ${name} "*) channel=blueprints ;;
               *) channel=operators ;;
             esac
-            members="$(tar tzf "$tgz")"
-            # A blueprint archive must describe itself (PUBLISHING.md rule 3). Check the ARCHIVE,
-            # before GHCR holds this version, against what the Marketplace index's publisher will
-            # refuse: helm package exits 0 whether or not the CompositionDefinition is in the
-            # chart, so otherwise a missing one surfaces only after the push, somewhere else.
-            # Read the listing once and match with a here-string: `tar | grep -q` under pipefail
-            # fails on SIGPIPE when grep matches.
-            if [ "$channel" = blueprints ]; then
-              for want in values.schema.json compositiondefinition.yaml; do
-                if ! grep -qxF "${name}/${want}" <<< "$members"; then
-                  echo "::error::${tgz} lacks ${name}/${want}; refusing to push"
-                  exit 1
-                fi
-              done
-              cd_yaml="$(tar -xzOf "$tgz" "${name}/compositiondefinition.yaml")"
-              cd_url="$(yq -r 'select(.kind == "CompositionDefinition") | .spec.chart.url' <<< "$cd_yaml")"
-              cd_ver="$(yq -r 'select(.kind == "CompositionDefinition") | .spec.chart.version' <<< "$cd_yaml")"
-              if [ "$cd_url" != "oci://ghcr.io/krateo-blueprints/charts/${name}" ] || [ "$cd_ver" != "$VERSION" ]; then
-                echo "::error::${tgz}: its CompositionDefinition installs '${cd_url}' '${cd_ver}', not oci://ghcr.io/krateo-blueprints/charts/${name} ${VERSION}"
-                exit 1
-              fi
-              chart_yaml="$(tar -xzOf "$tgz" "${name}/Chart.yaml")"
-              case "$(yq -r '.icon // ""' <<< "$chart_yaml")" in
-                https://*) : ;;
-                *) echo "::error::${tgz}: Chart.yaml icon must be an absolute https URL"; exit 1 ;;
-              esac
-              if [ "$(yq -r '(.keywords // []) | length' <<< "$chart_yaml")" -eq 0 ]; then
-                echo "::error::${tgz}: Chart.yaml needs keywords, the Marketplace's tags"
-                exit 1
-              fi
-            elif grep -qxF "${name}/values.schema.json" <<< "$members" \
-                 && grep -qxF "${name}/compositiondefinition.yaml" <<< "$members"; then
-              # The converse: the publisher refuses a blueprint in `operators`, so a chart that
-              # became one must be named in BLUEPRINT_CHARTS before it is pushed.
-              echo "::error::${tgz} carries values.schema.json and a CompositionDefinition, so it is a blueprint; add ${name} to BLUEPRINT_CHARTS"
-              exit 1
-            fi
-            helm push "$tgz" "${OCI_REPO}"
-            echo "pushed ${name}:${VERSION} (${channel})"
-            # The same bytes that went to GHCR, for that channel's index.
+            gate "$name" "$tgz" "$channel" || exit 1
             cp "$tgz" "charts-dist-${channel}/"
           done < /tmp/charts.txt
+
+          # Push only once every selected chart has passed the gate, so a refusal can't leave
+          # GHCR holding some of this tag's charts and not others. The same bytes go to the index.
+          for tgz in charts-dist-blueprints/*.tgz charts-dist-operators/*.tgz; do
+            [ -f "$tgz" ] || continue
+            helm push "$tgz" "${OCI_REPO}"
+            echo "pushed $(basename "$tgz" .tgz) ($(basename "$(dirname "$tgz")"))"
+          done
           for channel in blueprints operators; do
             if compgen -G "charts-dist-${channel}/*.tgz" >/dev/null; then
               echo "${channel}=true" >> "$GITHUB_OUTPUT"
@@ -255,7 +283,8 @@ jobs:
   publish-index-blueprints:
     needs: release
     if: needs.release.outputs.blueprints == 'true'
-    uses: krateo-blueprints/charts/.github/workflows/publish-chart.yaml@1
+    # To be replaced by the 1.0.0 commit SHA once tagged (PUBLISHING.md rule 9).
+    uses: krateo-blueprints/charts/.github/workflows/publish-chart.yaml@1.0.0
     with:
       source_repo: ${{ github.repository }}
       git_tag: ${{ github.ref_name }}
@@ -267,7 +296,8 @@ jobs:
   publish-index-operators:
     needs: release
     if: needs.release.outputs.operators == 'true'
-    uses: krateo-blueprints/charts/.github/workflows/publish-chart.yaml@1
+    # To be replaced by the 1.0.0 commit SHA once tagged (PUBLISHING.md rule 9).
+    uses: krateo-blueprints/charts/.github/workflows/publish-chart.yaml@1.0.0
     with:
       source_repo: ${{ github.repository }}
       git_tag: ${{ github.ref_name }}
