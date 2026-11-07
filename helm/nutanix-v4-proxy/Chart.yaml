@@ -16,6 +16,7 @@ keywords:
   - oasgen-provider
   - rest-dynamic-controller
 home: https://github.com/krateo-blueprints/krateo-nutanix-operator-kog
+icon: https://raw.githubusercontent.com/krateoplatformops/krateo/main/docs/media/logo.svg
 sources:
   - https://github.com/krateo-blueprints/krateo-nutanix-operator-kog
 maintainers:

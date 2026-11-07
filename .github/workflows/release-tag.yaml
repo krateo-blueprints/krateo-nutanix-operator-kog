@@ -15,6 +15,16 @@
 # Conservative by design: when the diff cannot be attributed confidently — no previous tag,
 # or a change outside helm/ that any chart might depend on — it publishes EVERYTHING.
 # Over-publishing is noise; under-publishing silently ships a stale chart.
+#
+# The same bytes are then published to the Marketplace index by the organisation's one publisher
+# (krateo-blueprints/charts PUBLISHING.md). The channel follows from the content: a chart with
+# values.schema.json and its own CompositionDefinition is a blueprint, anything else is not.
+#
+#   blueprints   nutanix-virtualmachine
+#   operators    nutanix-v4-proxy, nutanix-chain-lookup
+#
+# Only the charts this tag changed are published, so a tag may carry charts for one channel and
+# not the other. Each channel's publisher call runs only when this tag published a chart for it.
 
 name: release-tag
 
@@ -29,10 +39,27 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      blueprints: ${{ steps.package.outputs.blueprints }}
+      operators: ${{ steps.package.outputs.operators }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0          # need history to diff against the previous tag
+
+      # The Marketplace installs what the helm index at krateo-blueprints/charts lists, not what
+      # GHCR holds, and the publish-index jobs below need this secret to get there. Refuse here,
+      # before anything is pushed, so a missing token fails the release instead of leaving GHCR
+      # and the index at different versions (PUBLISHING.md rules 1 and 7).
+      - name: The Marketplace index token must be present
+        env:
+          CHARTS_PUBLISH_TOKEN: ${{ secrets.CHARTS_PUBLISH_TOKEN }}
+        run: |
+          if [ -z "${CHARTS_PUBLISH_TOKEN}" ]; then
+            echo "::error::secret CHARTS_PUBLISH_TOKEN is not set, so this release could not reach the"
+            echo "::error::Marketplace index and the Marketplace would keep installing an old version."
+            exit 1
+          fi
 
       - uses: azure/setup-helm@v4
 
@@ -91,8 +118,15 @@ jobs:
             | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
 
       - name: Package and push
+        id: package
+        env:
+          # The blueprint charts, named rather than inferred from the archive: inferring would
+          # send a blueprint whose CompositionDefinition went missing to `operators`, which
+          # accepts it. Named, it is checked below and refused before the push.
+          BLUEPRINT_CHARTS: nutanix-virtualmachine
         run: |
           set -euo pipefail
+          mkdir -p charts-dist-blueprints charts-dist-operators
           while read -r dir; do
             [ -z "$dir" ] && continue
             cf="$dir/Chart.yaml"
@@ -118,9 +152,76 @@ jobs:
             fi
             helm dependency build "$dir" 2>/dev/null || helm dependency update "$dir" 2>/dev/null || true
             helm package "$dir" --version "${VERSION}" --destination /tmp/pkg
-            helm push "/tmp/pkg/${name}-${VERSION}.tgz" "${OCI_REPO}"
-            echo "pushed ${name}:${VERSION}"
+            tgz="/tmp/pkg/${name}-${VERSION}.tgz"
+            case " ${BLUEPRINT_CHARTS} " in
+              *" ${name} "*) channel=blueprints ;;
+              *) channel=operators ;;
+            esac
+            members="$(tar tzf "$tgz")"
+            # A blueprint archive must describe itself (PUBLISHING.md rule 3). Check the ARCHIVE,
+            # before GHCR holds this version, against what the Marketplace index's publisher will
+            # refuse: helm package exits 0 whether or not the CompositionDefinition is in the
+            # chart, so otherwise a missing one surfaces only after the push, somewhere else.
+            # Read the listing once and match with a here-string: `tar | grep -q` under pipefail
+            # fails on SIGPIPE when grep matches.
+            if [ "$channel" = blueprints ]; then
+              for want in values.schema.json compositiondefinition.yaml; do
+                if ! grep -qxF "${name}/${want}" <<< "$members"; then
+                  echo "::error::${tgz} lacks ${name}/${want}; refusing to push"
+                  exit 1
+                fi
+              done
+              cd_yaml="$(tar -xzOf "$tgz" "${name}/compositiondefinition.yaml")"
+              cd_url="$(yq -r 'select(.kind == "CompositionDefinition") | .spec.chart.url' <<< "$cd_yaml")"
+              cd_ver="$(yq -r 'select(.kind == "CompositionDefinition") | .spec.chart.version' <<< "$cd_yaml")"
+              if [ "$cd_url" != "oci://ghcr.io/krateo-blueprints/charts/${name}" ] || [ "$cd_ver" != "$VERSION" ]; then
+                echo "::error::${tgz}: its CompositionDefinition installs '${cd_url}' '${cd_ver}', not oci://ghcr.io/krateo-blueprints/charts/${name} ${VERSION}"
+                exit 1
+              fi
+              chart_yaml="$(tar -xzOf "$tgz" "${name}/Chart.yaml")"
+              case "$(yq -r '.icon // ""' <<< "$chart_yaml")" in
+                https://*) : ;;
+                *) echo "::error::${tgz}: Chart.yaml icon must be an absolute https URL"; exit 1 ;;
+              esac
+              if [ "$(yq -r '(.keywords // []) | length' <<< "$chart_yaml")" -eq 0 ]; then
+                echo "::error::${tgz}: Chart.yaml needs keywords, the Marketplace's tags"
+                exit 1
+              fi
+            elif grep -qxF "${name}/values.schema.json" <<< "$members" \
+                 && grep -qxF "${name}/compositiondefinition.yaml" <<< "$members"; then
+              # The converse: the publisher refuses a blueprint in `operators`, so a chart that
+              # became one must be named in BLUEPRINT_CHARTS before it is pushed.
+              echo "::error::${tgz} carries values.schema.json and a CompositionDefinition, so it is a blueprint; add ${name} to BLUEPRINT_CHARTS"
+              exit 1
+            fi
+            helm push "$tgz" "${OCI_REPO}"
+            echo "pushed ${name}:${VERSION} (${channel})"
+            # The same bytes that went to GHCR, for that channel's index.
+            cp "$tgz" "charts-dist-${channel}/"
           done < /tmp/charts.txt
+          for channel in blueprints operators; do
+            if compgen -G "charts-dist-${channel}/*.tgz" >/dev/null; then
+              echo "${channel}=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "${channel}=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+      - name: Hand the blueprint tarballs to the index job
+        if: steps.package.outputs.blueprints == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: charts-dist-blueprints
+          path: charts-dist-blueprints/*.tgz
+          if-no-files-found: error
+
+      - name: Hand the operator tarballs to the index job
+        if: steps.package.outputs.operators == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: charts-dist-operators
+          path: charts-dist-operators/*.tgz
+          if-no-files-found: error
 
       - name: Verify anonymous pullability
         run: |
@@ -146,3 +247,31 @@ jobs:
             fi
           done < /tmp/charts.txt
           exit 0   # warn, don't block: visibility is a one-time manual step per package
+
+  # The Marketplace reads https://krateo-blueprints.github.io/charts/<channel>/index.yaml and
+  # installs the version its entry names. How every chart in the organisation gets there is decided
+  # once, in krateo-blueprints/charts PUBLISHING.md, and enforced by its publisher, which also reads
+  # the served index and installs each chart anonymously before it succeeds. One call per channel.
+  publish-index-blueprints:
+    needs: release
+    if: needs.release.outputs.blueprints == 'true'
+    uses: krateo-blueprints/charts/.github/workflows/publish-chart.yaml@1
+    with:
+      source_repo: ${{ github.repository }}
+      git_tag: ${{ github.ref_name }}
+      channel: blueprints
+      artifact: charts-dist-blueprints
+    secrets:
+      PUBLISH_TOKEN: ${{ secrets.CHARTS_PUBLISH_TOKEN }}
+
+  publish-index-operators:
+    needs: release
+    if: needs.release.outputs.operators == 'true'
+    uses: krateo-blueprints/charts/.github/workflows/publish-chart.yaml@1
+    with:
+      source_repo: ${{ github.repository }}
+      git_tag: ${{ github.ref_name }}
+      channel: operators
+      artifact: charts-dist-operators
+    secrets:
+      PUBLISH_TOKEN: ${{ secrets.CHARTS_PUBLISH_TOKEN }}
