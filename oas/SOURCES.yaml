@@ -1,0 +1,91 @@
+# Provenance of every vendored Nutanix spec in oas/_official/.
+#
+# Each file is Nutanix's published OpenAPI spec, vendored byte for byte from the URL below. sha256 is
+# the hash of the committed file. hack/validate-oas-sources.py (run by lint) refuses any drift: a hash
+# mismatch, a file in oas/_official/ with no entry here, an entry here with no file, or an empty
+# manifest. Re-vendoring a spec is therefore an explicit change to this file, reviewed with the spec.
+#
+# Why it exists: .trivyignore.yaml exempts one Trivy secret rule for one of these files
+# (prism-v4.0.yaml), and an ignore cannot match on a value. This pin limits that exemption to
+# Nutanix's published bytes; any edit to the file fails lint before the exemption could hide it.
+#
+# verified: the date every url was fetched and compared byte for byte with the committed file.
+# The manifest lives outside oas/_official/ because scripts/ glob oas/_official/*.yaml as specs.
+verified: "2026-11-18"
+files:
+  aiops-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/aiops/versions/v4.0/yaml
+    version: v4.0
+    sha256: 319f5e77e0a14d5b744a0eec8a3f2dabfb214e86ec4ef4863d57018670700833
+  clustermgmt-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/clustermgmt/versions/v4.0/yaml
+    version: v4.0
+    sha256: 5a6c5b13f42a73b69515a5cf2ceadf59c86b45b0113cc91b39288655e30dd52f
+  datapolicies-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/datapolicies/versions/v4.0/yaml
+    version: v4.0
+    sha256: e4c4822fe3da2f566bf5609a528499a17b13ffe05345fb0899cd2b3c332f39a8
+  dataprotection-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/dataprotection/versions/v4.0/yaml
+    version: v4.0
+    sha256: 8eb1e39cacd260c8b45fa5f59e1f87076344804a044c05a15a5ae3394dea57cf
+  files-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/files/versions/v4.0/yaml
+    version: v4.0
+    sha256: 5b0fc13c2fc6ad181bf901ab579a4fef023edc41f71e767f672c90a726b519d6
+  iam-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/iam/versions/v4.0/yaml
+    version: v4.0
+    sha256: 596c9c11d6db7f3005616fad3f32f1fc292178e23012db9509f0fdcc5cf6d6b3
+  licensing-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/licensing/versions/v4.0/yaml
+    version: v4.0
+    sha256: 4f75db1335a84a23ea83e38e2c28ee2a5e4a6cc73a25501b64873ea67f0ec08e
+  lifecycle-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/lifecycle/versions/v4.0/yaml
+    version: v4.0
+    sha256: 9807946215cac8921c20eff21a569eada2ad74ccd7043e667bf08a46e08a0368
+  microseg-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/microseg/versions/v4.0/yaml
+    version: v4.0
+    sha256: 8bd5b1fdd0369394c93c5d48befa0ee53e99ed757e8433b8e9e9634ffd14f9cf
+  monitoring-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/monitoring/versions/v4.0/yaml
+    version: v4.0
+    sha256: 4930a288579d19e1756d5387b8263d72bab9cf15b54d0afc15acf0329819b5dd
+  multidomain-v4.2.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/multidomain/versions/v4.2/yaml
+    version: v4.2
+    sha256: b99c89256144219428857dcdec90053be6c9692d880e3d3e08af1ed108482998
+  networking-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/networking/versions/v4.0/yaml
+    version: v4.0
+    sha256: 8c73d9cbd24775a5b788ae7d18c2fef915404534af1b0b12ecb3024dc66cf657
+  objects-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/objects/versions/v4.0/yaml
+    version: v4.0
+    sha256: a057d67afaa5a32cdadf7c9599231bfe1cc34445ee4b38d51cf1d126ab990f9a
+  opsmgmt-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/opsmgmt/versions/v4.0/yaml
+    version: v4.0
+    sha256: 1f51d3f75e680c9d947f1c1bda2c8652ff6bfb7a74ee8f2fe427b2cd647932a6
+  prism-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/prism/versions/v4.0/yaml
+    version: v4.0
+    sha256: 811b15580610ca777f85a44b515b37a7ef694617f76a13a09a92b4c590d1877b
+  security-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/security/versions/v4.0/yaml
+    version: v4.0
+    sha256: 7837f26a761f0801093669520b4e5273a4d3468688fe5ca3f77dd942fe4244b8
+  storage-v4.0.a3.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/storage/versions/v4.0.a3/yaml
+    version: v4.0.a3
+    sha256: 23685a3498e2097514d74cbce0301e4c96cfd2137d47cbe290c9c4972c570a9a
+  vmm-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/vmm/versions/v4.0/yaml
+    version: v4.0
+    sha256: bc0e032d44f7f60db55ac37ac1ab0f629be12ad16dce3fc14315b98e0714be85
+  volumes-v4.0.yaml:
+    url: https://developers.nutanix.com/api/v1/namespaces/volumes/versions/v4.0/yaml
+    version: v4.0
+    sha256: 9d321d20bf47e3ba63ee64ee50eb50718578090e67c40f4cadb19ce661b02029

@@ -42,3 +42,32 @@ jobs:
             helm lint "$dir" || true
             echo "::endgroup::"
           done < <(find . -type f -name Chart.yaml -not -path '*/charts/*' -not -path './.git/*' -print0)
+
+  # The vendored Nutanix specs are pinned by sha256 in oas/SOURCES.yaml. .trivyignore.yaml exempts one
+  # Trivy secret rule for oas/_official/prism-v4.0.yaml, and an ignore cannot match on a value, so this
+  # gate is what keeps that exemption limited to Nutanix's published bytes. Python only, so it runs
+  # beside the slow helm job, not after it.
+  oas-sources:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: PyYAML for the manifest
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet "pyyaml==6.0.2"
+
+      - name: The source-pin check refuses each kind of drift (self-test)
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: /tmp/venv/bin/python hack/test-validate-oas-sources.py
+
+      - name: Every vendored spec matches its pinned sha256 (oas/SOURCES.yaml)
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: /tmp/venv/bin/python hack/validate-oas-sources.py .
