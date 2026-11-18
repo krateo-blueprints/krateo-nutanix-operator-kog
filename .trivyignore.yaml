@@ -1,0 +1,17 @@
+# Scoped Trivy exceptions, read by the shared security workflow (krateo-platformops/.github
+# security.yml passes this file to trivy-action as `trivyignores`). Each entry names one rule and
+# the exact files it applies to; every other rule, and this rule in any other file, still gates.
+secrets:
+  - id: aws-access-key-id
+    paths:
+      - oas/_official/prism-v4.0.yaml
+    statement: >-
+      Nutanix's published Prism v4.0 OpenAPI spec, vendored byte-identical from
+      https://developers.nutanix.com/api/v1/namespaces/prism/versions/v4.0/yaml (verified
+      2026-11-18). The flagged line is the spec's own example value for an object-store
+      accessKeyId. It is not a Krateo credential, grants Krateo nothing, and is consumed by
+      nothing: no generated OAS slice or RestDefinition carries it. An ignore cannot match on a
+      value, so oas/SOURCES.yaml pins this file's sha256 and lint (hack/validate-oas-sources.py)
+      refuses any edit; the exemption covers only Nutanix's published bytes. It expires so that it
+      is reviewed again, not kept by default.
+    expired_at: 2027-11-18
